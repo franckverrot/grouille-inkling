@@ -1,0 +1,206 @@
+# What this tree is
+
+grouille is a specialized Apple Silicon engine for one small dense model.
+This directory is the same bet applied to a different model:
+[Inkling-2-Mini](https://huggingface.co/thinkingmachines/Inkling-2-Mini).
+Same habits.  Different kernels.  Own git tree on purpose.
+
+## Why it is not inside grouille
+
+Inkling is a looped multimodal MoE.  Twenty-four layers, three passes over
+the middle block, message gates between passes, 128 experts with top-8
+routing, short-conv width 4, head dim 128, sliding attention on most layers
+and full attention on every sixth.  Grouille's Metal surface is built around
+LFM2.5 assumptions that almost none of that matches.
+
+Putting both in one crate would either break the LFM2 contract or invent a
+general engine.  We already know how that ends.  So this is a sibling:
+steal the playbook, do not share the binaries.
+
+## What it does
+
+It generates text from a text prompt, with up to 1024 tokens of context.
+
+The engine is Rust plus Metal.  A greedy decode step records all 48 layer
+visits, the final mix, the unembed and the argmax onto one command buffer and
+waits once.  Nothing comes back to the CPU in between.  The residual stream,
+the block stack, the KV rings, the short-conv state and the message bank all
+live on the GPU, and the experts are read in the NVFP4 and MXFP8 form they
+ship in.  Sampling instead of greedy reads the logits back each step, which
+costs a little.
+
+The prompt runs through the same 48 visits with every token at once.  The
+projections, the attention and the experts go to Metal as matrix products.
+The stream comes back to the host between those stages, and the mixes,
+controllers, norms and clips run there on a few threads.
+
+Weights can load from the Hugging Face safetensors file.  That path inflates
+a lot of tensors on the host and then copies them again for Metal, so RSS
+balloons.  There is also a packed `.gpk` file: page-aligned expert blobs and
+f16 attention projections, mapped once and bound into Metal as they are.
+The embedding and the unembed are also copied to the host on load.  Convert with
+`spike/convert_gpk.py`.  `inkling-generate` prefers the pack when it is
+present under `weights/`.
+
+## How it compares
+
+On the M2 Max this was built on, with the same prompt and one process at a
+time, greedy decode runs at roughly one and a half times the rate of the
+local mlx-vlm checkout.  The lead shrinks a little as the context grows,
+since attention over the history costs more with every token.  Prompt
+processing goes the other way and takes a bit under twice as long as
+mlx-vlm's.  A run with a long prompt and a short answer still finishes
+sooner, because loading is quicker.  Peak memory with the pack sits around
+13 GB, where mlx-vlm peaks near 21.
+
+## How we know it is right
+
+The reference is mlx-vlm with its language model cast to float32.  We feed it
+the exact token sequence the engine produced and compare, position by
+position, what it would have picked and the logit values behind the pick.
+On the stored prompts the two agree on every token and the logits match to
+the third decimal.  `spike/regress.py` and `spike/ref_check.py` run the
+comparison, and the README shows how to call them.
+
+Float32 matters here.  mlx-vlm as shipped keeps activations in BF16, and that
+alone moves the top logits by a few tenths and flips the occasional close
+call.  Compare against that and you cannot tell a rounding difference from a
+bug.
+
+A Metal kernel launched with the wrong grid still runs and still returns
+numbers, and checking one mode of a build against another mode of the same
+build will not notice.  That is why a change does not count as done here
+until both scripts have passed on it.
+
+## The 8-bit option
+
+`INKLING_ATTN_Q8=1` requantizes the attention projections and the unembed to
+int8 with one scale per row, at load.  Those matrices are about two thirds of
+the bytes a token reads, so halving them buys a further fifth or so of speed.
+
+It is lossy.  On the stored prompts it lands about as far from the float32
+reference as mlx-vlm's own BF16 run does, and it disagrees on a similar
+handful of close tokens.  It applies to decode only, and the 8-bit weights
+are derived from the f16 ones when the engine starts.
+
+## Where the time goes
+
+A decode step reads a little over 5 GB of weights.  Attention projections are
+about half of that, the eight routed experts per visit about a third, and
+the unembed the rest.  A bare read on this GPU streams a bit under 400 GB/s,
+which puts the floor somewhere near 14 ms a token, and a decode step takes
+roughly twice that.
+
+The projections and the unembed already run at the ceiling.  Fewer bytes is
+the only thing that helps them.  The expert kernels do not.  They are held
+back by decoding 4-bit weights, not by memory, and a read-only pass over the
+same bytes runs nearly twice as fast.  The rest is the small per-visit work
+(mixes, message controllers, norms, routing) and the cost of every stage
+boundary between them.  Attention over the history is cheap at short context
+and grows with it.
+
+## How to run
+
+Local HF snapshot (already on this machine):
+
+```
+~/.cache/huggingface/hub/models--thinkingmachines--Inkling-2-Mini/snapshots/ed40e7da625f594fc9c4990f5f66be24873c22d7
+```
+
+MLX reference: a local checkout of mlx-vlm, installed in editable mode.
+
+```sh
+# build the pack once (writes weights/inkling2mini.gpk, gitignored)
+python3 spike/convert_gpk.py
+
+cargo build -p grouille-inkling --release
+./target/release/inkling-generate --bench 3 --max 64 "your prompt"
+# or force the HF file:
+./target/release/inkling-generate --weights "$HOME/.cache/huggingface/hub/.../model-00001-of-00001.safetensors" ...
+```
+
+
+# The model, as the engine sees it
+
+Inkling 2 Mini shares grouille's philosophy (specialize hard on Apple
+Silicon) and none of its kernel assumptions.
+
+| assumption in grouille | Inkling 2 Mini |
+|---|---|
+| `head_dim == 64` | `128` |
+| short-conv `L == 3` | `sconv_kernel_size == 4` |
+| dense SwiGLU | 128 experts, top-8, softcapped SwiGLU |
+| full attention every attn layer | sliding window 1024 on most layers, full on every sixth |
+| no MoE / no loop | core layers 6-17 run three times, with message gates |
+| vocab 65k, tied embed | vocab ~201k, separate unembed |
+
+## Geometry
+
+From `config.json` `text_config`:
+
+- `hidden_size` 2304, 24 layers, `vocab_size` 201024 of which 200058 are live
+- 24 query heads over 8 KV heads, `head_dim` 128
+- relative-position logits with `d_rel` 16 over an extent of 1024
+- short-conv width 4 on the K/V, attention-output and MLP-output paths
+- 128 routed experts, top-8, `intermediate_size` 1152, `route_scale` 8
+
+## The visit schedule
+
+Layers 0-5 run once, layers 6-17 run three times, layers 18-23 run once.
+That is 48 layer visits per token.  Each visit owns its KV history and its
+short-conv state, so the caches are sized for 48 and not for 24.
+
+Layers 5, 11, 17 and 23 use full attention.  The others use a sliding window
+of 1024.  Full layers differ in three more ways: their K/V short-conv adds
+per-token taps projected from the input, they normalize the q, k and v
+inputs separately, and they mix three residual queries where a sliding layer
+mixes one.
+
+Every sixth layer (0, 6, 12, 18) opens a residual block and pushes the
+incoming stream onto a stack.  Each layer then builds its attention input and
+its MLP input as a softmax mix over that stack plus the current stream, with
+learned queries.  Layer 0 is the exception on the attention side, where it
+takes the stream as it is.
+
+## Message gates
+
+After the first pass over the core, the engine builds a bank from the core's
+block states and the current stream, RMS-normalized.  On the second and third
+passes each core layer attends over that bank with four learned queries, one
+each for the attention, K, V and MLP inputs.  A rank-64 controller then
+blends the message in:
+
+```
+h   = down . [rms(x); rms(msg)]
+out = (1 - tanh(Wf h)) * x + tanh(Wg h) * msg
+```
+
+## Experts
+
+The router is a 128 x 2304 projection with a bias.  Scores go through a
+sigmoid, the top eight by score plus bias win, and their scores are rescaled
+to sum to 8.  An expert is a gate and an up projection (2304 to 1152, softcaps
+4 and 25), a SwiGLU, and a down projection back to 2304.
+
+## Head
+
+A last residual mix with its own query, an RMS norm, then the unembed.  The
+unembed is a separate tensor from the embedding, and the logits it produces
+are softcapped at 30.
+
+## Weight formats
+
+The checkpoint is about 19.5 GB in 1244 tensors.  Roughly 14 GB of it is
+expert weights.
+
+- The experts of layers 0-19 are NVFP4.  Four-bit E2M1 values packed two to
+  a byte, low nibble first, with one E4M3 scale per 16 weights and a
+  per-expert `amax` divided by 2688.
+- The experts of layers 20-23 are MXFP8, which is E4M3 bytes with one E8M0
+  scale per 32.
+- Attention projections, embedding, unembed and controllers are BF16.
+- The router bias and the learned queries are F32.
+- The vision tower is BF16.  The engine does not load it.
+
+The checkpoint interleaves each expert's gate and up rows in one tensor, which
+the pack splits into two.

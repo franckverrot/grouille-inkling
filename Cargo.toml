@@ -1,0 +1,24 @@
+[workspace]
+resolver = "2"
+members = ["engine"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+rust-version = "1.87"
+
+[workspace.dependencies]
+anyhow = "1"
+half = "2"
+memmap2 = "0.9"
+npyz = { version = "0.8", features = ["npz"] }
+objc2 = "0.6"
+objc2-foundation = "0.3"
+objc2-metal = "0.3"
+safetensors = "0.5"
+tokenizers = "0.21"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

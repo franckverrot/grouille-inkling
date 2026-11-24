@@ -1,0 +1,6 @@
+{
+  "path": "goldens/layer1.npz",
+  "n_tokens": 14,
+  "x_out_absmax": 50.75,
+  "bytes": 586262
+}

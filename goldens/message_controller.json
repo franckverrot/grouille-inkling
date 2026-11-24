@@ -1,0 +1,18 @@
+{
+  "path": "goldens/message_controller.npz",
+  "bank_shape": [
+    2,
+    2304
+  ],
+  "raw_states_shape": [
+    2,
+    2304
+  ],
+  "prelude_n_blocks": 1,
+  "messages_shape": [
+    4,
+    2304
+  ],
+  "out_absmax": 26.55501365661621,
+  "bytes": 1234703
+}

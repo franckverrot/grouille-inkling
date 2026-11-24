@@ -1,0 +1,6 @@
+{
+  "path": "goldens/core_12_17_f32.npz",
+  "n_blocks_out": 3,
+  "x_out_norm": 1118.953369140625,
+  "x_out_absmax": 307.329345703125
+}

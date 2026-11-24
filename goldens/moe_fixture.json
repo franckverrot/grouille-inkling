@@ -1,0 +1,4 @@
+{
+  "note": "Optional large packed-expert fixture from spike/export_moe_fixture.py (gitignored). Rust tests load goldens/layer0.npz plus the HF safetensors checkpoint instead.",
+  "activation_ref": "goldens/layer0.npz::moe_out_f32"
+}

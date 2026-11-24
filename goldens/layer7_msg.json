@@ -1,0 +1,6 @@
+{
+  "path": "goldens/layer7_msg.npz",
+  "tokens": 14,
+  "n_blocks": 2,
+  "x_out_absmax": 71.0
+}

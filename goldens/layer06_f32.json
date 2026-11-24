@@ -1,0 +1,6 @@
+{
+  "path": "goldens/layer06_f32.npz",
+  "x_out_absmax": 17.676799774169922,
+  "x_out_norm": 96.39102172851562,
+  "n_blocks_after": 2
+}

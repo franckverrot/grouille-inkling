@@ -1,0 +1,6 @@
+{
+  "path": "goldens/layer0_f32.npz",
+  "x_out_absmax": 30.177791595458984,
+  "vs_mlx_bf16_x_out_maxabs": 0.15564537048339844,
+  "bytes": 785731
+}

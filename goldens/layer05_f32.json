@@ -1,0 +1,6 @@
+{
+  "path": "goldens/layer05_f32.npz",
+  "x_out_absmax": 337.198974609375,
+  "x_out_norm": 1531.7508544921875,
+  "bytes": 903438
+}

@@ -1,0 +1,63 @@
+{
+  "checkpoint": "thinkingmachines/Inkling-2-Mini@ed40e7da625f594fc9c4990f5f66be24873c22d7",
+  "prompt": "Hi",
+  "n_tokens": 14,
+  "layer_idx": 0,
+  "is_sliding": true,
+  "shapes": {
+    "x_in": [
+      1,
+      14,
+      2304
+    ],
+    "attn_out": [
+      1,
+      14,
+      2304
+    ],
+    "residual_after_attn": [
+      1,
+      14,
+      2304
+    ],
+    "mlp_input_mixed": [
+      1,
+      14,
+      2304
+    ],
+    "moe_in": [
+      1,
+      14,
+      2304
+    ],
+    "moe_out": [
+      1,
+      14,
+      2304
+    ],
+    "x_out": [
+      1,
+      14,
+      2304
+    ],
+    "route_indices": [
+      1,
+      14,
+      8
+    ],
+    "route_weights": [
+      1,
+      14,
+      8
+    ],
+    "input_ids": [
+      14
+    ]
+  },
+  "x_out_stats": {
+    "mean": 0.0037732592318207026,
+    "std": 0.8788903951644897,
+    "absmax": 30.125
+  },
+  "route_indices_flat_unique": 56
+}
